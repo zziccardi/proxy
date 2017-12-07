@@ -30,11 +30,11 @@ struct ClientInfo {
     Clock::time_point startTime;
 };
 
-string getProxyHostName();
-int    getProxyPort(const int& socket, const struct sockaddr_in& sa);
-void*  requestHandler(void* ci);
-void   talkToServer(const string& request, const string& url);
-int    connectToServer(const string& hostName, const string& port);
+string     getProxyHostName();
+int        getProxyPort(const int& socket, const struct sockaddr_in& sa);
+void*      requestHandler(void* ci);
+CacheItem* talkToServer(const string& request, const string& url);
+int        connectToServer(const string& hostName, const string& port);
 
 #endif
 

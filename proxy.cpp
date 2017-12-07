@@ -152,10 +152,7 @@ void* requestHandler(void* ci) {
     // If the response is not already cached, forward the request to the server, cache the response,
     // and return it from talkToServer
     if (item == nullptr) {
-        talkToServer(requestString, url);
-        
-        // The item will be in the cache now, so get a pointer to it
-        item = cache.access(url);
+        item = talkToServer(requestString, url);
         
         hitOrMiss = "CACHE_MISS";
     }
@@ -226,10 +223,11 @@ void* requestHandler(void* ci) {
 
 /**
  * Forward the client's request to the server and cache the server's response. (This function is only called if a response isn't already cached.)
- * @param request - the client's full request
- * @param url - the URL of the server as specified in the client's request
+ * @param  request - the client's full request
+ * @param  url     - the URL of the server as specified in the client's request
+ * @return item    - a pointer to the newly cached item
  */
-void talkToServer(const string& request, const string& url) {
+CacheItem* talkToServer(const string& request, const string& url) {
     // Get a substring of the request containing only the headers (everything after line 1)
     string requestHeaders = request.substr(request.find("\r\n") + 2);
     
@@ -344,14 +342,16 @@ void talkToServer(const string& request, const string& url) {
     
     // Cache the response
     cache.insert(item);
+    
+    return item;
 }
 
 /**
  * Connect the proxy to the server specified by the client
  * https://beej.us/guide/bgnet/output/html/multipage/getaddrinfoman.html
- * @param hostName - the host name of the server
- * @param port - the port to use, in string form for use with getaddrinfo
- * @return serverSocket - the socket file descriptor used for the connection to the server
+ * @param  hostName      - the host name of the server
+ * @param  port          - the port to use, in string form for use with getaddrinfo
+ * @return serverSocket  - the socket file descriptor used for the connection to the server
  */
 int connectToServer(const string& hostName, const string& port) {
     struct addrinfo  hints;
@@ -465,8 +465,8 @@ string getProxyHostName() {
 
 /**
  * Get the port the proxy is running on
- * @param socket - the socket file descriptor
- * @param sa - the sockaddr structure to use
+ * @param  socket - the socket file descriptor
+ * @param  sa     - the sockaddr structure to use
  * @return port
  */
 int getProxyPort(const int& socket, const struct sockaddr_in& sa) {

@@ -29,31 +29,23 @@ void Cache::insert(CacheItem* item) {
             cerr << endl << "ERROR: Response for the following URL exceeds maximum cache size (" << maxSize << "): " << item->url << endl << endl;
             exit(EXIT_FAILURE);
         }
-        // If there's room to add the item without removing any others
-        else if (item->responseSize <= maxSize - bytesUsed) {
-            // Insert the item at the front so it becomes the new most recently used item
-            cache.insert(cache.begin(), item);
+        
+        // If there isn't room to add the item without removing other items, keep removing the least
+        // recently used item until there's enough room
+        while (item->responseSize > maxSize - bytesUsed) {
+            CacheItem* lastItem = cache.back();
             
-            bytesUsed += item->responseSize;
+            bytesUsed -= lastItem->responseSize;
+            
+            cache.erase(cache.end() - 1);
+            
+            delete lastItem;
         }
-        // Keep removing the least recently used item until there's enough room for the new one
-        else {
-            // While there's still not enough room
-            while (item->responseSize > maxSize - bytesUsed) {
-                CacheItem* lastItem = cache.back();
-                
-                bytesUsed -= lastItem->responseSize;
-                
-                cache.erase(cache.end() - 1);
-                
-                delete lastItem;
-            }
-            
-            // Insert the item at the front so it becomes the new most recently used item
-            cache.insert(cache.begin(), item);
-            
-            bytesUsed += item->responseSize;
-        }
+        
+        // Insert the item at the front so it becomes the new most recently used item
+        cache.insert(cache.begin(), item);
+        
+        bytesUsed += item->responseSize;
     }
     // It's already cached, but it's not at index 0, which is where the most recently used element is
     // kept, so move it there
@@ -68,7 +60,7 @@ void Cache::insert(CacheItem* item) {
 
 /**
  * If an item is in the cache, return a pointer to it and make it the most recently used item.
- * @param url - the URL to search for
+ * @param  url  - the URL to search for
  * @return item - a pointer to the CacheItem if found, otherwise nullptr
  */
 CacheItem* Cache::access(const string& url) {
@@ -96,10 +88,10 @@ CacheItem* Cache::access(const string& url) {
 }
 
 /**
- * Search the vector for a CacheItem with the provided URL
+ * Search the vector for a CacheItem with the provided URL.
  * NOTE: This does not lock!
- * @param url - the URL to search for
- * @return index of the CacheItem, or -1 if none is found
+ * @param  url   - the URL to search for
+ * @return index - the index of the CacheItem, or -1 if none is found
  * @private
  */
 int Cache::search(const string& url) {
