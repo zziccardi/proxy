@@ -16,7 +16,7 @@ class Cache {
     private:
         int               bytesUsed;
         pthread_mutex_t   lock;
-        vector<CacheItem> cache;
+        vector<CacheItem*> cache;
         
         int search(const string& url);
     
@@ -25,8 +25,8 @@ class Cache {
         
         Cache();
         
-        void   insert(const CacheItem& item);
-        string access(const string& url);
+        void       insert(CacheItem* item);
+        CacheItem* access(const string& url);
 };
 
 #endif

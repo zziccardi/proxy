@@ -14,8 +14,7 @@ class CacheItem {
         int    responseSize;  // size of the entire response in bytes
         int    contentLength; // as specified by the response header
         
-        CacheItem(const string& url, const string& response);
-        CacheItem(const CacheItem& item);
+        CacheItem(const string url, const string response, const int responseSize);
 };
 
 #endif

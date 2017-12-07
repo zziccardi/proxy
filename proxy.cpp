@@ -43,11 +43,11 @@ int main(int argc, char* argv[]) {
     
     string hostName = getProxyHostName();
     
-    cout << "Host name: " << hostName << endl;
+    cout << endl << "Host name: " << hostName << endl;
     
     int port = getProxyPort(mySocket, myAddr);
     
-    cout << "Port: " << port << endl;
+    cout << "Port:      " << port << endl << endl;
     
     // Wait for connection requests from clients
     while (true) {
@@ -57,19 +57,34 @@ int main(int argc, char* argv[]) {
         
         socklen_t saLength = sizeof clientAddr;
         
+        ClientInfo* clientInfo = new ClientInfo;
+        
         // Block until a connection request arrives.
         // Accept the connection request to the proxy's socket, create a new connected socket for
         // the client, and return a file descriptor referring to that socket.
-        int clientSocket = accept(mySocket, (sockaddr *) &clientAddr, &saLength);
+        clientInfo->socket = accept(mySocket, (sockaddr *) &clientAddr, &saLength);
         
-        if (clientSocket == -1) {
+        if (clientInfo->socket == -1) {
             perror("accept() failed");
             exit(EXIT_FAILURE);
         }
         
+        // Get the request processing start time
+        clientInfo->startTime = Clock::now();
+        
+        char ipAddrString[INET_ADDRSTRLEN];
+        
+        // Get the client's IP address in string form (printed later -- not needed for anything)
+        if (inet_ntop(AF_INET, &(clientAddr.sin_addr), ipAddrString, INET_ADDRSTRLEN) == NULL) {
+            perror("inet_ntop() failed");
+            exit(EXIT_FAILURE);
+        }
+        
+        clientInfo->ipAddress = string(ipAddrString);
+        
         pthread_t thread;
         
-        int r = pthread_create(&thread, NULL, requestHandler, (void *) &clientSocket);
+        int r = pthread_create(&thread, NULL, requestHandler, (void *) clientInfo);
         
         if (r != 0) {
             errno = r;
@@ -81,10 +96,19 @@ int main(int argc, char* argv[]) {
 
 /**
  * Read the HTTP request from the client, parse the URL from it, and check if the requested object is in the cache. If so, just send the cached copy. If not, forward the request to the server, cache the response, parse it, and forward it to the client.
- * @param fd - the client's socket file descriptor
+ * @param ci - a pointer to a ClientInfo struct
  */
-void* requestHandler(void* fd) {
-    int clientSocket = *((int *) fd);
+void* requestHandler(void* ci) {
+    ClientInfo* clientInfo = (ClientInfo *) ci;
+    
+    int               clientSocket = clientInfo->socket;
+    string            ipAddress    = clientInfo->ipAddress;
+    Clock::time_point startTime    = clientInfo->startTime;
+    
+    delete clientInfo;
+    
+    //cout << "Client socket: " << clientSocket << endl;
+    //cout << "IP address:    " << ipAddress    << endl;
     
     // The exact buffer size shouldn't matter since it's a stream socket
     // https://stackoverflow.com/questions/2862071/how-large-should-my-recv-buffer-be-when-calling-recv-in-the-socket-library
@@ -95,24 +119,22 @@ void* requestHandler(void* fd) {
     int byteCount;
     
     // Read the request from the client
+    // (recv seems to be able to get the entire request in one go since it's small)
     if ((byteCount = recv(clientSocket, requestBuffer, requestBufferSize - 1, 0)) == -1) {
         perror("recv() failed");
         exit(EXIT_FAILURE);
     }
     
+    // Because an HTTP request is plain text, it's safe to use a null-terminated C string
     requestBuffer[byteCount] = '\0';
     
     // The client closed the connection without sending any data
     if (byteCount == 0) {
-        
-        
-        // TODO: Do I need to do anything here, or can I just kill the thread?
-        
-        
+        cerr << "The client closed the connection without sending any data. The thread will exit." << endl;
         pthread_exit(NULL);
     }
     
-    cout << endl << requestBuffer;
+    //cout << endl << requestBuffer;
     
     string requestString = requestBuffer;
     string url           = requestString.substr(0, requestString.find("\r"));
@@ -122,28 +144,45 @@ void* requestHandler(void* fd) {
     
     //cout << "URL: " << url << endl << endl;
     
-    string fullResponse = "";
+    string hitOrMiss;
+    
+    // Check if the item is already in the cache and make it the most recently used item if so
+    CacheItem* item = cache.access(url);
     
     // If the response is not already cached, forward the request to the server, cache the response,
     // and return it from talkToServer
-    if ((fullResponse = cache.access(url)) == "") {
-        cout << "Cache miss: " << url << endl;
+    if (item == nullptr) {
+        talkToServer(requestString, url);
         
-        fullResponse = talkToServer(requestString, url);
+        // The item will be in the cache now, so get a pointer to it
+        item = cache.access(url);
+        
+        hitOrMiss = "CACHE_MISS";
     }
     else {
-        cout << "Cache hit:  " << url << endl;
+        hitOrMiss = "CACHE_HIT";
     }
     
-    // Use the data method instead of the c_str method so it works with binary data, which may contain
-    // the null terminator anywhere. Because it's not an ordinary null-terminated C string, it's
-    // necessary to keep track of the length.
-    const char* fullResponseBuffer = fullResponse.data();
+    // Make the buffer the exact size of the cached response
+    // Put it on the heap so that it can handle large files
+    char* fullResponseBuffer = new char[item->responseSize];
     
-    int fullLength = fullResponse.length();
+    // Copy the memory from the array version of the response string to the buffer. Use the data
+    // method instead of the c_str method so it works with binary data, which may contain the null
+    // terminator anywhere. Because it's not an ordinary null-terminated C string, it's necessary to
+    // keep track of the length (hence the responseSize field).
+    memcpy(fullResponseBuffer, item->response.data(), item->responseSize);
+    
+    //cout << endl << fullResponseBuffer << endl;
+    
+    int fullLength = item->responseSize;
     int bytesSent  = 0;
     int bytesLeft  = fullLength;
     int r          = -1;
+    
+    
+    // TODO: Send response headers first. If sending a big file, this is good for the client so it knows how large the file is and can display a progress bar.
+    
     
     // While the response has not been fully sent (large files won't be sent all at once)
     // https://beej.us/guide/bgnet/output/html/multipage/advanced.html#sendall
@@ -160,29 +199,41 @@ void* requestHandler(void* fd) {
         bytesLeft -= r;
     }
     
-    cout << "Full length: " << fullLength << endl;
-    cout << "Bytes sent:  " << bytesSent  << endl;
-    cout << "Bytes left:  " << bytesLeft  << endl;
-    cout << "r:           " << r          << endl;
+//    cout << "Full length: " << fullLength << endl;
+//    cout << "Bytes sent:  " << bytesSent  << endl;
+//    cout << "Bytes left:  " << bytesLeft  << endl;
+//    cout << "r:           " << r          << endl;
     
     // Close the client's socket file descriptor
     if (close(clientSocket) == -1) {
         perror("close() failed");
         exit(EXIT_FAILURE);
     }
+    
+    // Get the request processing stop time
+    Clock::time_point stopTime = Clock::now();
+    
+    // Get the duration in milliseconds
+    chrono::milliseconds ms = chrono::duration_cast<chrono::milliseconds>(stopTime - startTime);
+    
+    cout << ipAddress << "|" << url << "|" << hitOrMiss << "|" << item->contentLength << "|" << ms.count() << endl;
+    
+    delete [] fullResponseBuffer;
+    
+    // Avoid a compiler warning (the null value isn't used anywhere)
+    return NULL;
 }
 
 /**
- * Forward the client's request to the server, cache the server's response, and return it to this function's caller. (This function is only called if a response isn't already cached.)
+ * Forward the client's request to the server and cache the server's response. (This function is only called if a response isn't already cached.)
  * @param request - the client's full request
  * @param url - the URL of the server as specified in the client's request
- * @return fullResponse - the response from the server
  */
-string talkToServer(const string& request, const string& url) {
+void talkToServer(const string& request, const string& url) {
     // Get a substring of the request containing only the headers (everything after line 1)
     string requestHeaders = request.substr(request.find("\r\n") + 2);
     
-    //cout << "Request headers:\n" << requestHeaders << endl;
+    //cout << endl << "Request headers:\n" << requestHeaders << endl;
     
     int hostIndex = requestHeaders.find("Host:") + 6;
     
@@ -199,16 +250,41 @@ string talkToServer(const string& request, const string& url) {
     
     //cout << "Host name: " << hostName << endl;
     
+    string portString;
+    
+    // Account for additional characters when the port is not 80
+    int extraSize;
+    
+    int colonIndex = hostName.find(":");
+    
+    // If a colon wasn't found, assume port 80
+    if (colonIndex == -1) {
+        portString = "80";
+        extraSize  = 0;
+    }
+    else {
+        // Extract the port
+        portString = hostName.substr(colonIndex + 1);
+        extraSize  = portString.size() + 1;
+        
+        // Remove the part of the host name string containing the colon and port
+        hostName.erase(colonIndex);
+    }
+    
+    //cout << "Port:      " << portString << endl;
+    
     // Parse the path from the URL
-    string path = url.substr(url.find(hostName) + hostName.size());
+    string path = url.substr(url.find(hostName) + hostName.size() + extraSize);
     
     //cout << "Path: " << path << endl;
     
     string newRequestLine = "GET " + path + " HTTP/1.1\r\n";
     string newRequest     = newRequestLine + requestHeaders;
     
+    //cout << endl << newRequest << endl;
+    
     // Set up a connection between this proxy and the server
-    int serverSocket = connectToServer(hostName);
+    int serverSocket = connectToServer(hostName, portString);
     
     const char* newRequestBuffer = newRequest.c_str();
     
@@ -223,13 +299,15 @@ string talkToServer(const string& request, const string& url) {
     
     string fullResponse;
     
+    int fullResponseSize = 0;
+    
     // Loop until all of the response data is received
     while (true) {
         char responseBuffer[responseBufferSize];
         
         // Block until a message (part or all of the response) arrives from the server, then
         // receive it
-        int byteCount = recv(serverSocket, responseBuffer, responseBufferSize - 1, 0);
+        int byteCount = recv(serverSocket, responseBuffer, responseBufferSize, 0);
         
         if (byteCount == -1) {
             perror("recv() failed");
@@ -241,16 +319,16 @@ string talkToServer(const string& request, const string& url) {
             break;
         }
         
-        cout << endl << "***** NEW MESSAGE RECEIVED *****" << endl;
-        cout << "Byte count: " << byteCount << endl << endl;
-        
-        responseBuffer[byteCount] = '\0';
-        
-        cout << endl << responseBuffer << endl << endl;
+//        cout << endl << "***** NEW MESSAGE RECEIVED *****" << endl;
+//        cout << "Byte count: " << byteCount << endl << endl;
+//        
+//        cout << endl << responseBuffer << endl << endl;
         
         // Append the part of the response that was just received to the string that will contain the
         // entire response once all parts are received
-        fullResponse += responseBuffer;
+        fullResponse.append(responseBuffer, byteCount);
+        
+        fullResponseSize += byteCount;
     }
     
     // Close the server's socket file descriptor
@@ -259,22 +337,23 @@ string talkToServer(const string& request, const string& url) {
         exit(EXIT_FAILURE);
     }
     
+    //cout << endl << fullResponse << endl << endl;
+    
     // Create a new CacheItem for the resource specified by the URL, containing the server's response
-    CacheItem item(url, fullResponse);
+    CacheItem* item = new CacheItem(url, fullResponse, fullResponseSize);
     
     // Cache the response
     cache.insert(item);
-    
-    return fullResponse;
 }
 
 /**
  * Connect the proxy to the server specified by the client
  * https://beej.us/guide/bgnet/output/html/multipage/getaddrinfoman.html
  * @param hostName - the host name of the server
+ * @param port - the port to use, in string form for use with getaddrinfo
  * @return serverSocket - the socket file descriptor used for the connection to the server
  */
-int connectToServer(const string& hostName) {
+int connectToServer(const string& hostName, const string& port) {
     struct addrinfo  hints;
     struct addrinfo* results = nullptr;
     struct addrinfo* current = nullptr;
@@ -282,14 +361,14 @@ int connectToServer(const string& hostName) {
     memset(&hints, 0, sizeof hints);
     
     hints.ai_family   = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_socktype = 0;
     
     int gaiResult;
     
     // Get one or more addrinfo structures (results) about the host specified by hostName, which
     // is the server the client wants to reach through the proxy
-    if ((gaiResult = getaddrinfo(hostName.c_str(), "http", &hints, &results)) != 0) {
-        cerr << gai_strerror(gaiResult) << endl;
+    if ((gaiResult = getaddrinfo(hostName.c_str(), port.c_str(), &hints, &results)) != 0) {
+        cerr << "getaddrinfo() failed: " << gai_strerror(gaiResult) << endl;
         exit(EXIT_FAILURE);
     }
     

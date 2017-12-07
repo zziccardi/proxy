@@ -17,40 +17,42 @@ Cache::Cache() {
  * Insert a CacheItem into the cache. If the cache doesn't have enough room to insert the item, the least recently used (LRU) replacement policy is used to remove one or more items.
  * @param item - the item to insert
  */
-void Cache::insert(const CacheItem& item) {
+void Cache::insert(CacheItem* item) {
     pthread_mutex_lock(&lock);
     
-    int index = search(item.url);
+    int index = search(item->url);
     
     // If the item isn't already in the cache, add it
     if (index == -1) {
         // If the response exceeds the maximum cache size
-        if (item.responseSize > maxSize) {
-            cerr << "Response for " << item.url << " exceeds maximum cache size (" << maxSize << ")" << endl;
+        if (item->responseSize > maxSize) {
+            cerr << endl << "ERROR: Response for the following URL exceeds maximum cache size (" << maxSize << "): " << item->url << endl << endl;
             exit(EXIT_FAILURE);
         }
         // If there's room to add the item without removing any others
-        else if (item.responseSize <= maxSize - bytesUsed) {
+        else if (item->responseSize <= maxSize - bytesUsed) {
             // Insert the item at the front so it becomes the new most recently used item
             cache.insert(cache.begin(), item);
             
-            bytesUsed += item.responseSize;
+            bytesUsed += item->responseSize;
         }
         // Keep removing the least recently used item until there's enough room for the new one
         else {
             // While there's still not enough room
-            while (item.responseSize > maxSize - bytesUsed) {
-                int itemSize = cache.back().responseSize;
+            while (item->responseSize > maxSize - bytesUsed) {
+                CacheItem* lastItem = cache.back();
+                
+                bytesUsed -= lastItem->responseSize;
                 
                 cache.erase(cache.end() - 1);
                 
-                bytesUsed -= itemSize;
+                delete lastItem;
             }
             
             // Insert the item at the front so it becomes the new most recently used item
             cache.insert(cache.begin(), item);
             
-            bytesUsed += item.responseSize;
+            bytesUsed += item->responseSize;
         }
     }
     // It's already cached, but it's not at index 0, which is where the most recently used element is
@@ -65,31 +67,32 @@ void Cache::insert(const CacheItem& item) {
 }
 
 /**
- * If an item is in the cache, get its response text and make it the most recently used item.
+ * If an item is in the cache, return a pointer to it and make it the most recently used item.
  * @param url - the URL to search for
- * @return response - the response text or the empty string if the item is not cached
+ * @return item - a pointer to the CacheItem if found, otherwise nullptr
  */
-string Cache::access(const string& url) {
-    string response = "";
+CacheItem* Cache::access(const string& url) {
+    CacheItem* item = nullptr;
     
     pthread_mutex_lock(&lock);
     
     int index = search(url);
     
-    // If the item is cached, get the response and move the item to index 0
+    // If the item is cached, get a pointer to it
     if (index != -1) {
-        CacheItem item(cache[index]);
+        item = cache[index];
         
-        response = item.response;
-        
-        cache.erase(cache.begin() + index);
-        
-        cache.insert(cache.begin(), item);
+        // If the item is not at index 0, move it there to make it the most recently used item
+        if (index != 0) {
+            cache.erase(cache.begin() + index);
+            
+            cache.insert(cache.begin(), item);
+        }
     }
     
     pthread_mutex_unlock(&lock);
     
-    return response;
+    return item;
 }
 
 /**
@@ -103,7 +106,7 @@ int Cache::search(const string& url) {
     int index = -1;
     
     for (int i = 0; i < cache.size(); i++) {
-        if (cache[i].url == url) {
+        if (cache[i]->url == url) {
             index = i;
             break;
         }

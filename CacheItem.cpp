@@ -1,10 +1,10 @@
 
 #include "CacheItem.hpp"
 
-CacheItem::CacheItem(const string& url, const string& response) {
+CacheItem::CacheItem(const string url, const string response, const int responseSize) {
     this->url          = url;
     this->response     = response;
-    this->responseSize = response.size();
+    this->responseSize = responseSize;
     
     string substring = response.substr(response.find("Content-Length") + 16);
     
@@ -13,12 +13,5 @@ CacheItem::CacheItem(const string& url, const string& response) {
     this->contentLength = stoi(substring);
     
     //cout << "Content length: " << contentLength << endl;
-}
-
-CacheItem::CacheItem(const CacheItem& item) {
-    this->url           = item.url;
-    this->response      = item.response;
-    this->responseSize  = item.responseSize;
-    this->contentLength = item.contentLength;
 }
 
