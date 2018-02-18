@@ -116,12 +116,18 @@ void* requestHandler(void* ci) {
     
     char requestBuffer[requestBufferSize];
     
-    int byteCount;
+    int byteCount = recv(clientSocket, requestBuffer, requestBufferSize - 1, 0);
     
     // Read the request from the client
     // (recv seems to be able to get the entire request in one go since it's small)
-    if ((byteCount = recv(clientSocket, requestBuffer, requestBufferSize - 1, 0)) == -1) {
+    if (byteCount == -1) {
         perror("recv() failed");
+        exit(EXIT_FAILURE);
+    }
+    
+    // If this occurs, the recv call above will have to go in a loop
+    if (byteCount > requestBufferSize) {
+        cerr << "The request size is larger than the buffer can hold" << endl;
         exit(EXIT_FAILURE);
     }
     
